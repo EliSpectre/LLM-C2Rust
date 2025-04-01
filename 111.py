@@ -28,7 +28,7 @@ if cpp_code.startswith("读取文件"):
 # 初始化OpenAI客户端
 client = OpenAI(
     # 如果没有配置环境变量，请用百炼API Key替换：api_key="sk-xxx"
-    api_key = "",
+    api_key = "sk-99ff2f4f157d4fa6a54cafe3b4671aec",
     base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"
 )
 
@@ -71,7 +71,7 @@ for chunk in completion:
             answer_content += delta.content
 
 # 可选：将结果保存到文件
-with open("E:\OS\Project\my_project\src\main.rs", "w", encoding="utf-8") as f:
+with open(".\my_project\src\main.rs", "w", encoding="utf-8") as f:
     # 首先尝试提取<rust>标记后的代码
     if "<rust>" in answer_content:
         rust_code = answer_content.split("<rust>")[1].strip()
