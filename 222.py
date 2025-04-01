@@ -24,7 +24,7 @@ if cpp_code.startswith("读取文件出错"):
 # 初始化OpenAI客户端
 client = OpenAI(
     # 如果没有配置环境变量，请用百炼API Key替换：api_key="sk-xxx"
-    api_key = "sk-99ff2f4f157d4fa6a54cafe3b4671aec",
+    api_key = "",
     base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"
 )
 
