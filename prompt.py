@@ -9,14 +9,16 @@ class C2RustPromptGenerator:
     可以处理不同类型的C文件（主程序、头文件、实现文件等）。
     """
     
-    def __init__(self, project_path=None):
+    def __init__(self, project_path=None, document_path=None):
         """
         初始化Prompt生成器
         
         Args:
             project_path: C项目的根目录路径，用于自动发现文件
+            document_path: 文档目录路径，用于读取文档文件
         """
         self.project_path = project_path
+        self.document_path = document_path
         self.file_info = {}
         self.special_files = {
             "main.c": "主程序文件",
@@ -78,13 +80,70 @@ class C2RustPromptGenerator:
                 return h_basename
         return None
     
-    def get_file_prompt(self, filename, all_filenames=None):
+    def read_file_content(self, file_path):
         """
-        为特定文件生成转换提示
+        读取文件内容
         
         Args:
-            filename: 要转换的C文件名
+            file_path: 文件路径
+            
+        Returns:
+            文件内容字符串，如果读取失败返回None
+        """
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                return f.read()
+        except Exception as e:
+            print(f"读取文件 {file_path} 时出错: {str(e)}")
+            return None
+    
+    def find_document_file(self, filename):
+        """
+        在文档目录中查找与源文件对应的文档文件
+        
+        Args:
+            filename: 源文件名(如 main.c)
+            
+        Returns:
+            文档文件路径，如果不存在则返回None
+        """
+        if not self.document_path or not os.path.exists(self.document_path):
+            return None
+            
+        base_name = os.path.splitext(os.path.basename(filename))[0]
+        ext = os.path.splitext(os.path.basename(filename))[1]
+        
+        # 可能的文档文件名模式
+        possible_names = []
+        if ext == '.c':
+            possible_names = [f"{base_name}_impl.md", f"{base_name}.md"]
+        elif ext == '.h':
+            possible_names = [f"{base_name}_header.md", f"{base_name}.md"]
+        else:
+            possible_names = [f"{base_name}_{ext[1:]}.md", f"{base_name}.md"]
+            
+        # 首先尝试在主文档目录查找
+        for doc_name in possible_names:
+            doc_path = os.path.join(self.document_path, doc_name)
+            if os.path.exists(doc_path):
+                return doc_path
+                
+        # 如果在根目录没找到，递归查找子目录
+        for root, _, files in os.walk(self.document_path):
+            for file in files:
+                if file in possible_names:
+                    return os.path.join(root, file)
+                    
+        return None
+    
+    def get_file_prompt(self, filename, all_filenames=None, include_content=True):
+        """
+        为特定文件生成转换提示，可选择包含文件内容和相关文档
+        
+        Args:
+            filename: 要转换的C文件名或路径
             all_filenames: 所有相关文件名列表，用于提供上下文
+            include_content: 是否包含文件内容(True)和文档内容(如果有)
             
         Returns:
             针对该文件的转换提示字符串
@@ -92,29 +151,36 @@ class C2RustPromptGenerator:
         if all_filenames is None:
             all_filenames = list(self.file_info.keys()) if self.file_info else []
         
-        # 确定文件类型
+        # 确定文件类型和名称
+        if os.path.isabs(filename):
+            file_basename = os.path.basename(filename)
+        else:
+            file_basename = filename
+            if self.project_path and not os.path.exists(filename):
+                filename = os.path.join(self.project_path, filename)
+                
+        module_name = os.path.splitext(file_basename)[0]
         file_type = "unknown"
-        module_name = os.path.splitext(filename)[0]
         
-        if filename in self.file_info:
-            file_type = self.file_info[filename]["type"]
-        elif filename.endswith(".c"):
-            if filename == "main.c":
+        if file_basename in self.file_info:
+            file_type = self.file_info[file_basename]["type"]
+        elif file_basename.endswith(".c"):
+            if file_basename == "main.c":
                 file_type = "main"
             else:
                 file_type = "implementation"
-        elif filename.endswith(".h"):
+        elif file_basename.endswith(".h"):
             file_type = "header"
         
         # 基础提示部分
         base_prompt = f"""你是一位精通 C 和 Rust 的专家。请将以下 C 代码转换为地道的 Rust 代码。
 确保遵循 Rust 的所有最佳实践、内存安全原则和惯用表达方式。
 
-当前要转换的文件是: {filename}
+当前要转换的文件是: {file_basename}
 """
         
         if all_filenames:
-            base_prompt += f"\n项目中的相关文件: {', '.join(all_filenames)}\n"
+            base_prompt += f"\n项目中的相关文件: {', '.join([os.path.basename(f) if os.path.isabs(f) else f for f in all_filenames])}\n"
             
         # 根据不同文件类型提供特定的指导
         if file_type == "main":
@@ -125,6 +191,20 @@ class C2RustPromptGenerator:
             base_prompt += self._get_implementation_file_prompt(module_name)
         else:
             base_prompt += self._get_generic_file_prompt(module_name)
+        
+        # 如果需要，包含文件内容
+        if include_content and os.path.exists(filename):
+            content = self.read_file_content(filename)
+            if content:
+                base_prompt += f"\n【源代码内容】\n```c\n{content}\n```\n"
+        
+        # 如果设置了文档路径，尝试获取并包含文档内容
+        if self.document_path:
+            doc_path = self.find_document_file(file_basename)
+            if doc_path:
+                doc_content = self.read_file_content(doc_path)
+                if doc_content:
+                    base_prompt += f"\n【文档说明】\n{doc_content}\n"
         
         # 通用的输出格式要求
         base_prompt += self._get_output_format_prompt()
@@ -168,6 +248,8 @@ class C2RustPromptGenerator:
 【输出要求】
 - 转换成功时，输出{module_name}.rs文件的完整内容
 - 如果函数实现已在对应的.c文件中完成，此文件也需要转换，不要跳过
+- 需要特别注意，认真思考当前的.h文件是否需要转换
+- 如果当前文件不需要单独转换，请只输出: Skip this file
 """
     
     def _get_implementation_file_prompt(self, module_name):
@@ -262,66 +344,56 @@ pub fn min(a: i32, b: i32) -> i32 {
         return prompts
 
 
-def get_system_prompt(filename):
+def get_system_prompt(filename, all_files=None, document_path=None):
+    """根据文件类型生成对应的系统提示
+    
+    Args:
+        filename: 要转换的C文件名
+        all_files: 所有相关文件名列表，用于提供上下文
+        document_path: 文档目录路径，用于读取文档文件
+    
+    Returns:
+        针对该文件的转换提示字符串
+    """
     # 创建Prompt生成器
-    generator = C2RustPromptGenerator()
-    """根据文件类型生成对应的系统提示"""
-    base_prompt = f"""你是一位精通 C 和 Rust 的专家。请将以下 C 代码转换为地道的 Rust 代码，确保遵循 Rust 的所有最佳实践、内存安全原则和惯用表达方式。
-    我给你的是三个文件，main.c、math.h 和 math.c。我是要依次改写这三个文件。现在你首先判断当前的文件{filename}的名字。"""
+    generator = C2RustPromptGenerator(document_path=document_path)
     
-    if filename == "main.c":
-        # base_prompt += """
-        # 这是主程序文件，应该包含main函数。请将其转换为Rust中的main.rs文件。
-        # 如果原C代码引用了其他模块中的函数（如math.h中的函数），请在Rust代码中正确引用这些模块：
-        # 1. 使用mod语句引入模块
-        # 2. 使用正确的模块路径调用函数（例如math::max()）
-        # 3. 不要在main.rs中实现这些外部函数，只需引用它们"""
-        base_prompt += generator.get_file_prompt("main.c", ["main.c", "math.h", "math.c"])
+    if all_files is None:
+        all_files = []
+        # 尝试推断相关文件
+        if filename.endswith(".c"):
+            base_name = os.path.splitext(filename)[0]
+            possible_header = f"{base_name}.h"
+            if os.path.exists(possible_header):
+                all_files.append(possible_header)
     
-    elif filename == "math.h":
-        # base_prompt += """
-        # 这是头文件，包含了函数声明。在Rust中，这应该被转换为模块定义文件。
-        # 请注意，头文件的函数声明在Rust中应该变成pub函数定义，但不应该包含main函数或mod语句。
-        # 转换后的文件应该作为一个Rust模块，包含需要对外公开的函数定义，不包含任何main函数。"""
-        base_prompt += generator.get_file_prompt("math.h", ["main.c", "math.h", "math.c"])
+    # 加入当前文件
+    if filename not in all_files:
+        all_files.append(filename)
     
-    elif filename == "math.c":
-        # base_prompt += """
-        # 这是C函数实现文件，对应math.h中声明的函数。在Rust中，应将其转换为模块实现文件。
-        # 转换后的文件应该作为一个Rust模块，包含函数实现，但不包含任何main函数或mod语句。
-        # 所有需要被外部访问的函数应该标记为pub。"""
-        base_prompt += generator.get_file_prompt("math.c", ["main.c", "math.h", "math.c"])
-    
-    base_prompt += """
-        请仅生成当前文件{filename}对应的Rust代码，不要生成其他文件的代码。
-        使用 <rust> 标记后换行直接提供完整的Rust实现，不要在代码部分包含任何解释或注释。
-        如果当前文件不需要单独转换（例如C头文件内容已经在对应的实现文件中合并），则输出"Skip this file"。"""
-    
-    return base_prompt
-
-
-
-
+    # 生成文件的提示
+    return generator.get_file_prompt(filename, all_files)
 
 
 # 使用示例
 if __name__ == "__main__":
-    # 创建Prompt生成器
-    generator = C2RustPromptGenerator()
+    # 设置路径
+    project_path = "./CODE_SRC/src1"
+    document_path = "./document"
+    
+    # 创建带文档路径的Prompt生成器
+    generator = C2RustPromptGenerator(project_path=project_path, document_path=document_path)
     
     # 为特定文件生成提示
-    main_prompt = generator.get_file_prompt("main.c", ["main.c", "math.h", "math.c"])
-    print("===== main.c的转换提示 =====")
-    print(main_prompt)
+    # main_prompt = generator.get_file_prompt("main.c", ["main.c", "math.h", "math.c"])
+    # print("===== main.c的转换提示 =====")
+    # print(main_prompt)
     
-    math_h_prompt = generator.get_file_prompt("math.h", ["main.c", "math.h", "math.c"])
-    print("\n===== math.h的转换提示 =====")
+    # 也可以使用辅助函数
+    math_h_prompt = get_system_prompt("main.c", ["main.c", "math.h", "math.c"], document_path)
+    print("\n===== main.c的转换提示 =====")
     print(math_h_prompt)
     
-    math_c_prompt = generator.get_file_prompt("math.c", ["main.c", "math.h", "math.c"])
-    print("\n===== math.c的转换提示 =====")
-    print(math_c_prompt)
-    
     # 为整个目录生成提示
-    # directory_prompts = generator.generate_prompts_for_directory("path/to/your/c/project")
+    # directory_prompts = generator.generate_prompts_for_directory("./CODE_SRC/src1")
     # print(f"为{len(directory_prompts)}个文件生成了转换提示")
