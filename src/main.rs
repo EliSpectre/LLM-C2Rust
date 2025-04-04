@@ -1,8 +1,9 @@
-mod math;
+mod module{
+    pub mod stu;
+}
 
 fn main() {
-    let a = 10;
-    let b = 20;
-    println!("max={}", math::max(a, b));
-    println!("min={}", math::min(a, b));
+    module::stu::init();
+    module::stu::show_all_stu();
+    module::stu::find_stu_by_scores();
 }
