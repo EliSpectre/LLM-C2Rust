@@ -8,6 +8,7 @@ import re
 import argparse
 from openai import OpenAI
 import time
+from config import api_key as my_api_key, base_url as my_base_url, big_model ,document_path, src_code_directory_path
 
 class CProjectDocGenerator:
     """
@@ -889,15 +890,137 @@ def save_single_file_documentation(file_path, documentation, output_dir):
     doc_generator.save_documentation(file_path, documentation, output_dir)
 
 
+def generate_file_tree(directory_path, output_file):
+    """
+    生成项目文件结构树并保存到指定文件
+    
+    Args:
+        directory_path: 项目根目录路径
+        output_file: 输出的文件路径
+    """
+    print(f"生成文件结构树: {directory_path} -> {output_file}")
+    
+    # 初始化树结构
+    tree = {}
+    
+    # 扫描目录收集所有文件
+    all_files = []
+    for root, dirs, files in os.walk(directory_path):
+        # 按字母顺序排序目录和文件
+        dirs.sort()
+        files.sort()
+        
+        # 忽略隐藏目录
+        dirs[:] = [d for d in dirs if not d.startswith('.')]
+        
+        for file in files:
+            # 忽略隐藏文件
+            if not file.startswith('.'):
+                full_path = os.path.join(root, file)
+                rel_path = os.path.relpath(full_path, directory_path)
+                all_files.append(rel_path.replace('\\', '/'))  # 统一使用正斜杠
+    
+    # 排序文件列表
+    all_files.sort()
+    
+    # 构建树结构
+    for file_path in all_files:
+        parts = file_path.split('/')
+        current = tree
+        for i, part in enumerate(parts):
+            # 处理文件名与路径
+            if i == len(parts) - 1:  # 文件名
+                if 'files' not in current:
+                    current['files'] = []
+                current['files'].append(part)
+            else:  # 目录
+                if 'dirs' not in current:
+                    current['dirs'] = {}
+                if part not in current['dirs']:
+                    current['dirs'][part] = {}
+                current = current['dirs'][part]
+    
+    # 渲染树状图
+    output = []
+    output.append(f"# {os.path.basename(directory_path)} 项目文件结构\n")
+    output.append("```")
+    output.append(os.path.basename(directory_path))
+    
+    def render_tree(node, prefix="", is_last=True, is_root=False):
+        lines = []
+        
+        # 处理目录
+        if 'dirs' in node:
+            dirs = list(node['dirs'].items())
+            for i, (name, subnode) in enumerate(dirs):
+                is_last_dir = (i == len(dirs) - 1) and ('files' not in node)
+                
+                # 确定连接符号
+                if is_root:
+                    connector = "└── " if is_last_dir else "├── "
+                    next_prefix = "    " if is_last_dir else "│   "
+                else:
+                    connector = "└── " if is_last_dir else "├── "
+                    next_prefix = prefix + ("    " if is_last_dir else "│   ")
+                
+                lines.append(f"{prefix}{connector}{name}/")
+                # 递归处理子目录
+                sub_lines = render_tree(subnode, next_prefix, is_last_dir, False)
+                lines.extend(sub_lines)
+        
+        # 处理文件
+        if 'files' in node:
+            files = node['files']
+            for i, file in enumerate(files):
+                is_last_file = (i == len(files) - 1)
+                connector = "└── " if is_last_file else "├── "
+                lines.append(f"{prefix}{connector}{file}")
+        
+        return lines
+    
+    tree_lines = render_tree(tree, is_root=True)
+    output.extend(tree_lines)
+    output.append("```\n")
+    
+    # 添加额外的统计信息
+    file_types = {}
+    for file in all_files:
+        ext = os.path.splitext(file)[1]
+        if not ext:
+            ext = "(无扩展名)"
+        if ext not in file_types:
+            file_types[ext] = 0
+        file_types[ext] += 1
+    
+    # 添加文件统计信息
+    output.append("\n## 文件统计\n")
+    output.append(f"- 总文件数: {len(all_files)}")
+    output.append("- 文件类型分布:")
+    
+    # 按文件数量排序
+    sorted_types = sorted(file_types.items(), key=lambda x: x[1], reverse=True)
+    for ext, count in sorted_types:
+        output.append(f"  - {ext}: {count} 个文件")
+    
+    # 写入文件
+    with open(output_file, 'w', encoding='utf-8') as f:
+        f.write('\n'.join(output))
+    
+    print(f"文件结构树已保存到: {output_file}")
+    return output_file
+
 def main():
     parser = argparse.ArgumentParser(description='C文件文档生成工具')
-    parser.add_argument('--path', type=str, default="./CODE_SRC/src2", help='要处理的C文件路径或目录路径')
-    parser.add_argument('--output', type=str, default="./document", help='文档输出目录路径')
-    parser.add_argument('--api_key', type=str, default="", help='API密钥')
-    parser.add_argument('--base_url', type=str, default="https://dashscope.aliyuncs.com/compatible-mode/v1",
+    parser.add_argument('--path', type=str, default=src_code_directory_path, help='要处理的C文件路径或目录路径')
+    parser.add_argument('--output', type=str, default=document_path, help='文档输出目录路径')
+    parser.add_argument('--api_key', type=str, default=my_api_key, help='API密钥')
+    parser.add_argument('--base_url', type=str, default=my_base_url,
                         help='API基础URL')
-    parser.add_argument('--model', type=str, default='qwq-32b', help='要使用的模型')
+    parser.add_argument('--model', type=str, default=big_model, help='要使用的模型')
     parser.add_argument('--include-related', action='store_true', help='包含相关文件信息')
+    parser.add_argument('--generate-tree', action='store_true', help='生成项目文件结构树')
+    parser.add_argument('--tree-output', type=str, default=None, 
+                        help='文件结构树的输出路径，默认保存到源代码目录')
     
     args = parser.parse_args()
     
@@ -926,6 +1049,19 @@ def main():
             save_single_file_documentation(path, documentation, output_dir)
             
         elif os.path.isdir(path):
+            # 生成文件结构树
+            # 确定树文件输出路径
+            if args.tree_output:
+                # 使用用户指定的路径
+                tree_output = args.tree_output
+            else:
+                # 默认保存到源代码目录
+                tree_output = os.path.join(output_dir, path)
+                tree_output = os.path.join(tree_output, "tree.md")
+                
+            generate_file_tree(path, tree_output)
+            print(f"文件结构树已保存到: {tree_output}")
+            
             # 处理整个目录
             process_directory_with_custom_output(
                 path,

@@ -4,6 +4,7 @@ import shutil
 from prompt import get_system_prompt
 from read_c_files import read_files, get_output_path, is_data_file, is_code_file, read_cpp_file, copy_file
 from validate_rust_code import validate_rust_code
+from config import src_code_directory_path, api_key, big_model, document_path, code_output_dir, data_output_dir, base_url
 
 def extract_rust_code(answer_content):
     """从回答内容中提取Rust代码"""
@@ -34,16 +35,14 @@ def extract_rust_code(answer_content):
 
 # 主程序开始
 # 指定要读取的文件列表（包括所有类型文件）
-directory_path = "./CODE_SRC/src2"
-all_files, _ = read_files(directory_path)  # 不限制扩展名，读取所有文件
+# src_code_directory_path = "./CODE_SRC/src2"
+all_files, _ = read_files(src_code_directory_path)  # 不限制扩展名，读取所有文件
 
 # 过滤出需要处理的代码文件
 c_files = [f for f in all_files if is_code_file(f)]
 
 
 # 确保输出目录存在
-code_output_dir = "./my_project/src"  # 代码文件的输出目录
-data_output_dir = "./my_project"      # 数据文件的输出目录
 os.makedirs(code_output_dir, exist_ok=True)
 os.makedirs(data_output_dir, exist_ok=True)
 
@@ -52,20 +51,20 @@ for filename in all_files:
     if is_data_file(filename):
         print(f"\n{'='*40}\n处理数据文件: {filename}\n{'='*40}")
         # 使用data_output_dir作为目标目录
-        copy_file(directory_path, filename, data_output_dir)
+        copy_file(src_code_directory_path, filename, data_output_dir)
 
 # 如果有代码文件需要转换
 if c_files:
     # 获取拼接后的C代码
-    cpp_code = read_cpp_file(directory_path, c_files)
+    cpp_code = read_cpp_file(src_code_directory_path, c_files)
     if cpp_code.startswith("读取文件"):
         print(cpp_code)
         exit(1)
 
-    # 初始化OpenAI客户端
+    # 初始化zhipuai客户端
     client = OpenAI(
-        api_key = "",
-        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"
+        api_key = api_key,  # 请填写您自己的APIKey
+        base_url=base_url,  # 
     )
 
     # 处理每个代码文件
@@ -73,7 +72,6 @@ if c_files:
         print(f"\n{'='*40}\n处理代码文件: {filename}\n{'='*40}")
         
         # 获取针对当前文件类型的系统提示
-        document_path = "./document"
         system_prompt = get_system_prompt(filename,all_files, document_path)
         
         reasoning_content = ""  # 定义完整思考过程
@@ -81,17 +79,18 @@ if c_files:
         is_answering = False    # 判断是否结束思考过程并开始回复
         
         # 注意这里使用code_output_dir
-        output_path = get_output_path(code_output_dir, filename, c_files, directory_path)
+        output_path = get_output_path(code_output_dir, filename, c_files, src_code_directory_path)
         
         system_prompt = ("\n\n这是文件的路径,你生成代码的时候,使用其他文件mod的时候需要注意一下!!!!!,特别是比如main文件时,直接mod某个文件名可能不行,同时转换子文件的时候也得注意一下" + str(all_files)+
         "注意这是数据的保存的路径,即:比我们转换完的代码的路径少一级,所以代码中遇到的读取数据的路径需要对应修改一下"+data_output_dir
         +"\n\n" + system_prompt)
         
+        
         completion = client.chat.completions.create(
-            model="qwq-32b",
+            model= big_model,
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": cpp_code}
+                {"role": "user", "content": "这是c语言的代码/n" + cpp_code}
             ],
             stream=True,
         )
@@ -126,8 +125,16 @@ if c_files:
         # 提取Rust代码
         rust_code = extract_rust_code(answer_content)
         
+        
         # 验证并修正Rust代码
-        rust_code = validate_rust_code(filename, rust_code,all_files)
+        print("\n" + "=" * 20 + "验证Rust代码" + "=" * 20 + "\n")
+        if filename == "main.c":
+            # 对于main文件，直接使用cpp_code
+            rust_code = validate_rust_code(filename, rust_code, all_files)
+        # rust_code = validate_rust_code(filename, rust_code,all_files)
+        
+         # 提取Rust代码
+        rust_code = extract_rust_code(answer_content)
         
         # 保存到文件
         os.makedirs(os.path.dirname(output_path), exist_ok=True)

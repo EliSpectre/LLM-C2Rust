@@ -1,0 +1,11 @@
+{
+    "files.associations": {
+        "bank_types.h": "c",
+        "simulation.h": "c",
+        "event_management.h": "c",
+        "history_management.h": "c",
+        "window_management.h": "c",
+        "utils.h": "c",
+        "string.h": "c"
+    }
+}
